@@ -66,20 +66,58 @@ on Debian makes sense in some cases, such as a custom partition layout.
 
 ## 3. Set up root and your sudo user
 
-Log in to Xfce as your normal user. Don't run the desktop as root.
+### If you boot to a text login
 
-Open **Applications > Terminal Emulator** and become root. Keep the dash in
-`su -`, because it sets up root's full command path.
+Don't use `startx` or `startxfce4`. They can fail with DBUS or
+`Only console users are allowed to run the X server` errors. Log in on the
+laptop's own screen, then use `sudo -i` or `su -` to get a root shell if you
+logged in as your normal user.
+
+Check the default target and login manager:
 
 ```bash
-su -
+systemctl get-default
+systemctl status lightdm --no-pager
 ```
 
-If Xfce won't start, press `Ctrl+Alt+F3`, log in as root, and use the commands
-below. Press `Ctrl+Alt+F7` to return to Xfce. If that shows a blank screen, try
-`Ctrl+Alt+F1`.
+If the target is `multi-user.target`, LightDM won't start at boot even when it's
+enabled. Set the graphical target and start it:
 
-Add sudo access, replacing `YOUR_USER`:
+```bash
+systemctl set-default graphical.target
+systemctl start lightdm
+```
+
+If the Xfce or LightDM packages are missing, connect to the network and run:
+
+```bash
+apt update
+apt install -y task-xfce-desktop lightdm network-manager
+systemctl set-default graphical.target
+systemctl enable lightdm
+systemctl reboot
+```
+
+### Get a root shell
+
+Log in to LightDM as your normal user. Debian blocks root from logging in there,
+which is normal, so don't try to enable it.
+
+Open **Applications > Terminal Emulator** and become root:
+
+```bash
+sudo -i
+```
+
+If your user doesn't have sudo access, use `su -` and enter the root password.
+Keep the dash, because it sets up root's full command path.
+
+If the desktop won't start, press `Ctrl+Alt+F3`, log in as root, and use the
+commands below. Press `Ctrl+Alt+F7` to return to Xfce. If that shows a blank
+screen, try `Ctrl+Alt+F1`.
+
+If `sudo -i` already worked, your user has sudo access and you can skip to the
+root password check below. Otherwise, add sudo access, replacing `YOUR_USER`:
 
 ```bash
 apt update
@@ -97,11 +135,19 @@ sudo -i
 
 `sudo -i` gives you a root shell. **Run all remaining commands in this guide as root.**
 
-If you left the root password blank during install, sudo is already set up and
-root has no password. Set one now, because the web UI needs it:
+### Check the root password
+
+The Proxmox web UI needs a root password. If you left it blank during install,
+sudo is already set up and root has no password. Check it from your root shell:
 
 ```bash
-sudo passwd root
+passwd -S root
+```
+
+If the second field is `L` or `NP`, or you're unsure of the password, set one:
+
+```bash
+passwd root
 ```
 
 Debian normally blocks SSH password login for root, so connect as your normal
@@ -109,16 +155,37 @@ user and then run `sudo -i`.
 
 ## 4. Make Wi-Fi start at boot
 
-Remove any Wi-Fi settings from `/etc/network/interfaces`. Keep the `lo` entries.
+The installer can put Wi-Fi settings in `/etc/network/interfaces`. If so,
+`nmcli device status` shows the adapter as `unmanaged`, and there may be no
+internet access.
+
+Open the file and comment out every Wi-Fi line. Keep the `lo` entries.
 
 ```bash
 nano /etc/network/interfaces
 ```
 
-Connect with NetworkManager, replacing `YOUR_SSID`:
+```text
+auto lo
+iface lo inet loopback
+
+# allow-hotplug wlp2s0
+# iface wlp2s0 inet dhcp
+#     wpa-ssid YourNetwork
+#     wpa-psk  YourPassword
+```
+
+Restart NetworkManager and check that the adapter shows `disconnected`:
 
 ```bash
-systemctl enable --now NetworkManager
+systemctl enable NetworkManager
+systemctl restart NetworkManager
+nmcli device status
+```
+
+Connect, replacing `YOUR_SSID`:
+
+```bash
 nmcli device wifi list
 nmcli --ask device wifi connect "YOUR_SSID"
 ```
@@ -131,11 +198,46 @@ nmcli connection modify "YOUR_SSID" connection.permissions "" \
   802-11-wireless-security.psk-flags 0 connection.autoconnect yes
 ```
 
-Then confirm Wi-Fi is up and disable the install media in APT:
+Confirm that both the connection and DNS work:
 
 ```bash
+ping -c 3 1.1.1.1
 ping -c 3 deb.debian.org
+```
+
+### Clean up the APT sources
+
+Disable the install media and convert the sources to the current format:
+
+```bash
 sed -i 's/^deb cdrom:/# deb cdrom:/' /etc/apt/sources.list
+apt modernize-sources
+apt update
+```
+
+If `apt update` still reports a missing `Signed-By` for backports, find the entry
+and the keyring file:
+
+```bash
+grep -Rl backports /etc/apt/sources.list /etc/apt/sources.list.d/
+ls /usr/share/keyrings/debian-archive-keyring.*
+```
+
+Open the file that `grep` lists, and add this line to the backports entry, using
+the keyring path that `ls` shows:
+
+```text
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+```
+
+That format is for a `.sources` file. In a one-line `deb` entry, use
+`deb [signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] ...` instead.
+Backports isn't needed for this setup, so you can disable that entry instead.
+
+Run `apt update` again, then confirm `non-free-firmware` is still listed:
+
+```bash
+grep -R '^Components' /etc/apt/sources.list.d/
 ```
 
 ## 5. Create the bridge and pin the hostname
@@ -150,7 +252,18 @@ Install the prerequisites. `ifupdown2` replaces `ifupdown`, which is expected.
 apt install -y ifupdown2 nftables bridge-utils
 ```
 
-From this repository folder, review `scripts/setup-network.sh`, then run:
+Copy this folder to the laptop by USB drive or `git clone`, keeping its layout.
+The script reads `configs/wifi-nat.service` and creates `/etc/wifi-nat.nft`
+itself, so there's no NAT file to copy by hand.
+
+```text
+proxmox-wifi-workstation/
+|-- README.md
+|-- configs/wifi-nat.service
+`-- scripts/setup-network.sh
+```
+
+From this folder, review `scripts/setup-network.sh`, then run:
 
 ```bash
 env BRIDGE_CIDR=10.255.0.1/24 NAT_CIDR=10.20.0.0/16 bash scripts/setup-network.sh
@@ -159,6 +272,9 @@ env BRIDGE_CIDR=10.255.0.1/24 NAT_CIDR=10.20.0.0/16 bash scripts/setup-network.s
 Both values are optional, and those shown are the defaults. `NAT_CIDR` must
 cover every guest subnet that needs internet access. Avoid ranges used by
 networks you join.
+
+Keep the working directory and folder layout as shown. The script is safe to run
+again and stops with an error if the bridge or NAT service doesn't come up.
 
 The script keeps timestamped backups of the files it changes. It adds `vmbr0`,
 points the hostname at the bridge address in `/etc/hosts`, enables IPv4
@@ -174,6 +290,21 @@ systemctl status wifi-nat --no-pager
 
 `hostname --ip-address` should include `10.255.0.1`, not only a `127.x.x.x`
 address. `vmbr0` may show `DOWN` until a guest connects, which is normal.
+`wifi-nat` should show `active (exited)`.
+
+The web UI isn't available yet. It arrives with the Proxmox packages in step 8,
+so `localhost:8006` won't work before then.
+
+If `vmbr0` doesn't exist, make sure the prerequisites are installed and rerun the
+script from this folder:
+
+```bash
+apt install -y ifupdown2 nftables bridge-utils
+ls -l configs/wifi-nat.service scripts/setup-network.sh
+bash scripts/setup-network.sh; echo "exit code: $?"
+```
+
+If it still doesn't appear, run `ifup -d vmbr0 2>&1 | tail -30` to see why.
 
 ## 6. Add the Proxmox repository
 
@@ -403,6 +534,15 @@ in its DHCP settings.
 
 | Problem | What to check |
 | --- | --- |
+| Boots to a text login | Run `systemctl set-default graphical.target`, then `systemctl start lightdm`. |
+| `startx` shows a DBUS or console users error | Don't use `startx`. Start LightDM and log in as your normal user. |
+| Root can't log in to LightDM | This is normal. Log in as your normal user, then run `sudo -i`. |
+| `su -` fails but `sudo -i` works | Run `passwd -S root`, then set a password with `passwd root` if needed. |
+| `rfkill: command not found` | Skip it unless Wi-Fi is blocked. If it is, run `apt install rfkill`. |
+| Wi-Fi shows `unmanaged` | Comment out its lines in `/etc/network/interfaces`, then restart NetworkManager. If it stays unmanaged, try `nmcli device set WIFI_DEVICE managed yes` and check `/etc/NetworkManager/conf.d`. |
+| APT reports a missing `Signed-By` | Run `apt modernize-sources`, then add `Signed-By` to any remaining entry, as shown in step 4. |
+| `vmbr0` is in `/etc/network/interfaces` but missing from `ip` | Install the step 5 prerequisites, then rerun `setup-network.sh` from this folder. |
+| `journalctl -u wifi-nat` has no entries | The service hasn't started. Rerun `setup-network.sh` and check its exit code. |
 | `error: bad shim signature` | Disable Secure Boot. |
 | `ipcc_send_rec[1] failed: Connection refused` | Review `/etc/hosts`, then run `hostname --ip-address`. |
 | Wi-Fi fails on the `-pve` kernel | Boot the Debian kernel if it's still installed, then run `lspci -nnk \| grep -iA3 network` and `journalctl -b -1 -k \| grep -iE 'firmware\|wifi\|iwl\|mt7\|ath\|rtw'`. |
