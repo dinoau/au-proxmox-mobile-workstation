@@ -1,0 +1,25 @@
+
+ Proxmox Wi-Fi workstation
+ ------------------------------------------------------------------
+ Desktop     sudo systemctl start lightdm
+             sudo systemctl stop lightdm
+ Boot mode   sudo systemctl set-default multi-user.target    (CLI)
+             sudo systemctl set-default graphical.target     (desktop)
+
+ Web UI      https://10.255.0.1:8006 (on this machine)
+             https://WIFI_IP:8006    (from another device)
+ Remote      ssh USER@WIFI_IP
+             RDP to WIFI_IP:3389     (if xrdp is installed)
+
+ Wi-Fi       ip -br addr                     show current addresses
+             nmcli device wifi list          scan for networks
+             sudo nmtui                      add or edit networks
+             nmcli connection show           list saved networks
+
+ Guests      sudo qm list                    list VMs
+             sudo pct list                   list containers
+ Health      systemctl --failed              show failed services
+             systemctl status wifi-nat       check guest NAT
+             pveversion                      show Proxmox version
+             sudo systemctl restart pve-cluster pvedaemon pveproxy
+
