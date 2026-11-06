@@ -1,0 +1,13 @@
+[Unit]
+Description=NAT guest traffic out through Wi-Fi
+Wants=network-pre.target
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/wifi-nat.nft
+ExecStop=/usr/sbin/nft delete table ip wifi_nat
+
+[Install]
+WantedBy=multi-user.target
