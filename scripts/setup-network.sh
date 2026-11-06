@@ -21,6 +21,9 @@ if [[ -z "$ROOT" ]]; then
   dpkg -s nftables >/dev/null 2>&1 || die "install nftables first"
 fi
 
+SERVICE_FILE="$SCRIPT_DIR/../configs/wifi-nat.service"
+[[ -f "$SERVICE_FILE" ]] || die "$SERVICE_FILE not found; keep the folder layout intact"
+
 INTERFACES="$ROOT/etc/network/interfaces"
 HOSTS="$ROOT/etc/hosts"
 [[ -f "$INTERFACES" ]] || die "$INTERFACES not found"
@@ -73,15 +76,18 @@ table ip wifi_nat {
   }
 }
 CONF
-install -m 0644 "$SCRIPT_DIR/../configs/wifi-nat.service" \
+install -m 0644 "$SERVICE_FILE" \
   "$ROOT/etc/systemd/system/wifi-nat.service"
 
 if [[ -z "$ROOT" ]]; then
   sysctl --system >/dev/null
-  systemctl daemon-reload
-  systemctl enable --now wifi-nat.service
-  systemctl restart wifi-nat.service
+  # Bring up the bridge first so a NAT failure can't leave it missing.
   ifreload -a
+  ip link show "$BRIDGE" >/dev/null 2>&1 || die "$BRIDGE was not created; run: ifup -d $BRIDGE"
+  systemctl daemon-reload
+  systemctl enable wifi-nat.service
+  systemctl restart wifi-nat.service
+  systemctl is-active --quiet wifi-nat.service || die "wifi-nat failed; run: journalctl -u wifi-nat -b"
 fi
 
-echo "done: web UI at https://$BRIDGE_IP:8006"
+echo "done: bridge and NAT ready; web UI will be at https://$BRIDGE_IP:8006 after Proxmox is installed"
