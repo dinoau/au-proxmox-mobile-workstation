@@ -17,7 +17,6 @@ backup() { [[ ! -e "$1" ]] || cp -a "$1" "$1.bak-$STAMP"; }
 
 if [[ -z "$ROOT" ]]; then
   [[ $EUID -eq 0 ]] || die "run as root"
-  command -v pveversion >/dev/null || die "Proxmox VE is not installed"
   dpkg -s ifupdown2 >/dev/null 2>&1 || die "install ifupdown2 first"
   dpkg -s nftables >/dev/null 2>&1 || die "install nftables first"
 fi
