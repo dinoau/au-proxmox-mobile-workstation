@@ -472,6 +472,16 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
 Reboot to apply the lid setting.
 
+Turn off Wi-Fi power saving, which can make SSH laggy or unreliable:
+
+```bash
+cat > /etc/NetworkManager/conf.d/wifi-powersave.conf << EOL
+[connection]
+wifi.powersave = 2
+EOL
+systemctl restart NetworkManager
+```
+
 ## 12. Set up guest networking
 
 Choose an option in **Datacenter > SDN**. Leave **SNAT unticked** in both. Its
@@ -530,6 +540,92 @@ ping -c 3 deb.debian.org
 If the IP ping works but the name lookup fails, set a DNS server in the guest or
 in its DHCP settings.
 
+## 13. Set up closed-lid use
+
+### Boot to the CLI
+
+Run this once to stop the desktop starting at boot:
+
+```bash
+systemctl set-default multi-user.target
+```
+
+Start or stop the desktop when needed:
+
+```bash
+sudo systemctl start lightdm
+sudo systemctl stop lightdm
+```
+
+Stopping LightDM closes the local desktop session. VMs and containers keep
+running. To boot to the desktop again, run
+`systemctl set-default graphical.target`.
+
+### Move between Wi-Fi networks
+
+The laptop auto-connects to saved networks if their profiles are available to all
+users, as set in step 4. Add each new network once with `nmtui` as root: choose
+**Edit a connection > Add > Wi-Fi**, then enter its SSID and password. You can do
+this before you travel.
+
+Check the saved networks:
+
+```bash
+nmcli -f NAME,TYPE,AUTOCONNECT connection show
+```
+
+For a network with a browser sign-in page, open the lid, start LightDM, and sign
+in with Firefox.
+
+### Know the closed-lid limits
+
+- **LUKS:** Every boot stops at the passphrase prompt, before Wi-Fi connects. After
+  a reboot or power loss, open the lid and enter the passphrase.
+- **Changing address:** The Wi-Fi address changes between networks. Run
+  `ip -br addr` on the laptop to find it, or use a mesh VPN such as Tailscale for
+  a stable address.
+- **Local-only bridge:** `10.255.0.1` only works from the laptop itself.
+
+### Connect remotely
+
+SSH is already installed from the Debian setup:
+
+```bash
+ssh YOUR_USER@WIFI_IP
+```
+
+To add remote desktop with xRDP, run this as root:
+
+```bash
+apt install -y xrdp xorgxrdp
+adduser xrdp ssl-cert
+systemctl enable --now xrdp
+```
+
+Then, as your normal user, not root, choose Xfce for xRDP sessions:
+
+```bash
+echo xfce4-session > ~/.xsession
+```
+
+Connect an RDP client to `WIFI_IP:3389` and log in as your normal user. xRDP
+doesn't need LightDM running. Log out of any local desktop first, because the same
+user can't reliably run both sessions at once.
+
+SSH, RDP and the web UI are reachable by other devices on the same Wi-Fi unless
+you block them. On shared networks, use a VPN and restrict these ports with a
+firewall. Leave a working console option available when testing firewall rules.
+
+### Add the command reference to the login message
+
+The login message shows these commands on the console and over SSH. xRDP doesn't
+show it. From this folder, run this as root:
+
+```bash
+cp -a /etc/motd /etc/motd.bak
+install -m 0644 configs/motd /etc/motd
+```
+
 ## Troubleshooting
 
 | Problem | What to check |
@@ -549,7 +645,8 @@ in its DHCP settings.
 | DNS fails on the host | Check `/etc/resolv.conf` and `nmcli device show`. Don't add `resolvconf`, and don't set DNS in the Proxmox UI. |
 | Wi-Fi only connects after login | Repeat the `nmcli connection modify` command in step 4. |
 | Guests have no internet | Check `sysctl net.ipv4.ip_forward`, `nft list table ip wifi_nat`, and that the guest subnet is inside `NAT_CIDR`. |
-| Web UI won't open | Run `systemctl status pveproxy`, then try `https://127.0.0.1:8006`. |
+| Web UI won't open | Use `https://`, then try `https://127.0.0.1:8006`. If it still fails, run `systemctl restart pve-cluster pvedaemon pveproxy`. If it needs this after every reboot, check `journalctl -b -u pve-cluster -u pveproxy`. |
+| xRDP shows a blank screen or closes at once | Check `~/.xsession`, log out of any local desktop session, then check `journalctl -u xrdp -u xrdp-sesman -b`. |
 | Network settings are wrong | Restore the latest `/etc/network/interfaces.bak-*` or `/etc/hosts.bak-*` file, then run `ifreload -a`. |
 
 ## Remove NAT
@@ -565,3 +662,4 @@ systemctl daemon-reload
 - [Install Proxmox VE on Debian 13 Trixie](https://pve.proxmox.com/wiki/Install_Proxmox_VE_on_Debian_13_Trixie)
 - [Setup Simple Zone With SNAT and DHCP](https://pve.proxmox.com/wiki/Setup_Simple_Zone_With_SNAT_and_DHCP)
 - [Proxmox VE network configuration](https://pve.proxmox.com/wiki/Network_Configuration)
+- [xrdp](https://www.xrdp.org/)
